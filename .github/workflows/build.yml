@@ -9,7 +9,7 @@ jobs:
       - name: Build Kernel
         uses: dabao1955/kernel_build_action@main
         with:
-          kernel-url: https://github.com/samsung-sm8450-kernel/android_kernel_samsung_sm8450
+          kernel-url: https://github.com/iamimmanuelraj/opensource_samsung_SM_S901E
           kernel-branch: main
           config: r0q_defconfig
           arch: arm64
