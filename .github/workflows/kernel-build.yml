@@ -1,0 +1,152 @@
+name: Kernel Build S901E NetHunter
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            bc bison build-essential ca-certificates cpio curl flex git \
+            libelf-dev libssl-dev python3 rsync unzip wget zip \
+            device-tree-compiler libncurses-dev liblz4-tool lz4 patch
+
+      - name: Download clang
+        run: |
+          mkdir -p "$HOME/tc/clang"
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r416183b.tar.gz -O /tmp/cl.tar.gz
+          tar -xf /tmp/cl.tar.gz -C "$HOME/tc/clang"
+          echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
+
+      - name: Download gcc
+        run: |
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 "$HOME/tc/gcc64"
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$HOME/tc/gcc32"
+          echo "G64=$HOME/tc/gcc64/bin" >> "$GITHUB_ENV"
+          echo "G32=$HOME/tc/gcc32/bin" >> "$GITHUB_ENV"
+
+      - name: Detect kernel dir
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/kernel_platform/common/Makefile" ]; then
+            echo "KD=$GITHUB_WORKSPACE/kernel_platform/common" >> "$GITHUB_ENV"
+          elif [ -f "$GITHUB_WORKSPACE/Makefile" ]; then
+            echo "KD=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          else
+            echo "::error::No Makefile found"
+            find "$GITHUB_WORKSPACE" -maxdepth 5 -name Makefile
+            exit 1
+          fi
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -o pipefail
+          export PATH="$CP:$G64:$G32:$PATH"
+          cd "$KD"
+
+          F=(
+            ARCH=arm64
+            CC=clang
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            CROSS_COMPILE=aarch64-linux-android-
+            CROSS_COMPILE_ARM32=arm-linux-androideabi-
+            O=out
+          )
+
+          make "${F[@]}" r0q_defconfig 2>&1 | tee /tmp/defconfig.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -50 /tmp/defconfig.log; exit 1; }
+
+          {
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_CFG80211=y"
+            echo "CONFIG_CFG80211_WEXT=y"
+            echo "CONFIG_MAC80211=y"
+            echo "CONFIG_MAC80211_MESH=y"
+            echo "CONFIG_BT=y"
+            echo "CONFIG_BT_BREDR=y"
+            echo "CONFIG_BT_LE=y"
+            echo "CONFIG_BT_RFCOMM=y"
+            echo "CONFIG_BT_RFCOMM_TTY=y"
+            echo "CONFIG_BT_BNEP=y"
+            echo "CONFIG_BT_HIDP=y"
+            echo "CONFIG_BT_HCIBTUSB=y"
+            echo "CONFIG_BT_HCIBTUSB_BCM=y"
+            echo "CONFIG_BT_HCIBTUSB_RTL=y"
+            echo "CONFIG_BT_HCIUART=y"
+            echo "CONFIG_BT_HCIVHCI=y"
+            echo "CONFIG_USB_GADGET=y"
+            echo "CONFIG_USB_CONFIGFS=y"
+            echo "CONFIG_USB_CONFIGFS_RNDIS=y"
+            echo "CONFIG_USB_CONFIGFS_F_HID=y"
+            echo "CONFIG_USB_NET_DRIVERS=y"
+            echo "CONFIG_USB_USBNET=y"
+            echo "CONFIG_TUN=y"
+            echo "CONFIG_NETFILTER=y"
+            echo "CONFIG_IP_NF_IPTABLES=y"
+            echo "CONFIG_IP_NF_NAT=y"
+            echo "CONFIG_PACKET=y"
+            echo "CONFIG_ANDROID_BINDER_IPC=y"
+            echo "CONFIG_SECURITY_SELINUX_BOOTPARAM=y"
+            echo "CONFIG_SECURITY_SELINUX_DEVELOP=y"
+          } >> out/.config
+
+          make "${F[@]}" olddefconfig 2>&1 | tee /tmp/olddefconfig.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -80 /tmp/olddefconfig.log; exit 1; }
+
+          make "${F[@]}" -j"$(nproc --all)" Image 2>&1 | tee /tmp/build.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -120 /tmp/build.log; exit 1; }
+
+          echo "IMG=$KD/out/arch/arm64/boot/Image" >> "$GITHUB_ENV"
+
+      - name: Package AnyKernel3
+        run: |
+          AK=""
+          for d in external/AnyKernel3 AnyKernel3 kernel_platform/common/external/AnyKernel3; do
+            [ -d "$GITHUB_WORKSPACE/$d" ] && AK="$GITHUB_WORKSPACE/$d" && break
+          done
+          [ -z "$AK" ] && git clone --depth=1 https://github.com/osm0sis/AnyKernel3 /tmp/AK && AK=/tmp/AK
+          cp "$IMG" "$AK/"
+          cd "$AK"
+          zip -r9 "$GITHUB_WORKSPACE/NH-S901E.zip" . -x "*.git*"
+          echo "ZIP=$GITHUB_WORKSPACE/NH-S901E.zip" >> "$GITHUB_ENV"
+
+      - name: Upload Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: NH-S901E-Image
+          path: ${{ env.IMG }}
+          if-no-files-found: error
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: NH-S901E-zip
+          path: ${{ env.ZIP }}
+          if-no-files-found: warn
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== DEFCONFIG ==="
+          cat /tmp/defconfig.log 2>/dev/null || true
+          echo "=== OLDDEFCONFIG ==="
+          cat /tmp/olddefconfig.log 2>/dev/null || true
+          echo "=== BUILD TAIL ==="
+          tail -150 /tmp/build.log 2>/dev/null || true
+          echo "=== MAKEFILES ==="
+          find "$GITHUB_WORKSPACE" -maxdepth 5 -name Makefile
