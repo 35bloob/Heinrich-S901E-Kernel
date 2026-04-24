@@ -11,6 +11,7 @@ jobs:
         with:
           kernel-url: https://github.com/polygraphene/SM-S901U_NA_12_Kernel
           kernel-branch: main
+          kernel-dir: kernel
           config: vendor/lahaina-qgki_defconfig
           arch: arm64
           aosp-clang: true
