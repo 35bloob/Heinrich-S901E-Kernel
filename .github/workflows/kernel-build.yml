@@ -1,61 +1,34 @@
 name: Kernel Build S901E NetHunter
-
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
       - name: Install deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y \
-            bc bison build-essential ca-certificates cpio curl flex git \
-            libelf-dev libssl-dev python3 rsync unzip wget zip \
-            device-tree-compiler libncurses-dev liblz4-tool lz4 patch
+          sudo apt-get install -y bc bison build-essential ca-certificates cpio curl flex git libelf-dev libssl-dev python3 rsync unzip wget zip device-tree-compiler libncurses-dev liblz4-tool lz4 patch
 
-      - name: Download clang
+      - name: Clone kernel source
         run: |
-          rm -rf "$HOME/tc/clang" "$HOME/tc/clang-src"
-          mkdir -p "$HOME/tc/clang"
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b "$HOME/tc/clang-src"
-          cp -a "$HOME/tc/clang-src/." "$HOME/tc/clang/"
-          test -x "$HOME/tc/clang/bin/clang"
+          git clone --depth=1 https://github.com/samsung-sm8450/android_kernel_samsung_sm8450 kernel
+          echo "KD=$GITHUB_WORKSPACE/kernel" >> "$GITHUB_ENV"
+
+      - name: Clone Clang
+        run: |
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b "$HOME/tc/clang"
           echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
 
-      - name: Download gcc
+      - name: Clone GCC
         run: |
-          rm -rf "$HOME/tc/gcc64" "$HOME/tc/gcc32"
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 "$HOME/tc/gcc64"
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$HOME/tc/gcc32"
           echo "G64=$HOME/tc/gcc64/bin" >> "$GITHUB_ENV"
           echo "G32=$HOME/tc/gcc32/bin" >> "$GITHUB_ENV"
-
-      - name: Detect kernel dir
-        run: |
-          if [ -f "$GITHUB_WORKSPACE/kernel_platform/common/Makefile" ]; then
-            echo "KD=$GITHUB_WORKSPACE/kernel_platform/common" >> "$GITHUB_ENV"
-          elif [ -f "$GITHUB_WORKSPACE/Makefile" ]; then
-            echo "KD=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          else
-            echo "::error::No Makefile found"
-            find "$GITHUB_WORKSPACE" -maxdepth 5 -name Makefile
-            exit 1
-          fi
 
       - name: Build kernel
         shell: bash
@@ -63,52 +36,20 @@ jobs:
           set -o pipefail
           export PATH="$CP:$G64:$G32:$PATH"
           cd "$KD"
-
-          F=(
-            ARCH=arm64
-            CC=clang
-            CLANG_TRIPLE=aarch64-linux-gnu-
-            CROSS_COMPILE=aarch64-linux-android-
-            CROSS_COMPILE_ARM32=arm-linux-androideabi-
-            O=out
-          )
-
+          F=(ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- O=out)
           make "${F[@]}" r0q_defconfig 2>&1 | tee /tmp/defconfig.log
           [ ${PIPESTATUS[0]} -eq 0 ] || { tail -50 /tmp/defconfig.log; exit 1; }
-
-          {
-            echo "CONFIG_KSU=y"
-            echo "CONFIG_USB_GADGET=y"
-            echo "CONFIG_USB_CONFIGFS=y"
-            echo "CONFIG_USB_CONFIGFS_RNDIS=y"
-            echo "CONFIG_USB_CONFIGFS_F_HID=y"
-            echo "CONFIG_USB_NET_DRIVERS=y"
-            echo "CONFIG_USB_USBNET=y"
-            echo "CONFIG_TUN=y"
-            echo "CONFIG_NETFILTER=y"
-            echo "CONFIG_IP_NF_IPTABLES=y"
-            echo "CONFIG_IP_NF_NAT=y"
-            echo "CONFIG_PACKET=y"
-          } >> out/.config
-
+          { echo "CONFIG_KSU=y"; echo "CONFIG_USB_GADGET=y"; echo "CONFIG_USB_CONFIGFS=y"; echo "CONFIG_USB_CONFIGFS_F_HID=y"; echo "CONFIG_USB_NET_DRIVERS=y"; echo "CONFIG_USB_USBNET=y"; echo "CONFIG_TUN=y"; echo "CONFIG_NETFILTER=y"; echo "CONFIG_IP_NF_IPTABLES=y"; echo "CONFIG_IP_NF_NAT=y"; echo "CONFIG_PACKET=y"; } >> out/.config
           make "${F[@]}" olddefconfig 2>&1 | tee /tmp/olddefconfig.log
-          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -80 /tmp/olddefconfig.log; exit 1; }
-
-          make "${F[@]}" -j"$(nproc --all)" Image 2>&1 | tee /tmp/build.log
-          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -120 /tmp/build.log; exit 1; }
-
+          make "${F[@]}" -j$(nproc --all) Image 2>&1 | tee /tmp/build.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -150 /tmp/build.log; exit 1; }
           echo "IMG=$KD/out/arch/arm64/boot/Image" >> "$GITHUB_ENV"
 
       - name: Package AnyKernel3
         run: |
-          AK=""
-          for d in external/AnyKernel3 AnyKernel3 kernel_platform/common/external/AnyKernel3; do
-            [ -d "$GITHUB_WORKSPACE/$d" ] && AK="$GITHUB_WORKSPACE/$d" && break
-          done
-          [ -z "$AK" ] && git clone --depth=1 https://github.com/osm0sis/AnyKernel3 /tmp/AK && AK=/tmp/AK
-          cp "$IMG" "$AK/"
-          cd "$AK"
-          zip -r9 "$GITHUB_WORKSPACE/NH-S901E.zip" . -x "*.git*"
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 /tmp/AK
+          cp "$IMG" /tmp/AK/
+          cd /tmp/AK && zip -r9 "$GITHUB_WORKSPACE/NH-S901E.zip" . -x "*.git*"
           echo "ZIP=$GITHUB_WORKSPACE/NH-S901E.zip" >> "$GITHUB_ENV"
 
       - name: Upload Image
@@ -128,11 +69,6 @@ jobs:
       - name: Dump logs on failure
         if: failure()
         run: |
-          echo "=== DEFCONFIG ==="
-          cat /tmp/defconfig.log 2>/dev/null || true
-          echo "=== OLDDEFCONFIG ==="
-          cat /tmp/olddefconfig.log 2>/dev/null || true
-          echo "=== BUILD TAIL ==="
           tail -150 /tmp/build.log 2>/dev/null || true
-          echo "=== MAKEFILES ==="
-          find "$GITHUB_WORKSPACE" -maxdepth 5 -name Makefile
+          tail -80 /tmp/olddefconfig.log 2>/dev/null || true
+          tail -50 /tmp/defconfig.log 2>/dev/null || true
