@@ -9,10 +9,10 @@ jobs:
       - name: Build Kernel
         uses: dabao1955/kernel_build_action@main
         with:
-          kernel-url: https://github.com/polygraphene/SM-S901U_NA_12_Kernel
+          kernel-url: https://github.com/ASKSAP/android_kernel_samsung_r0q
           kernel-branch: main
           depth: 1
-          config: vendor/lahaina-qgki_defconfig
+          config: r0q_defconfig
           arch: arm64
           aosp-clang: true
           aosp-clang-version: r416183b
