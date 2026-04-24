@@ -12,24 +12,23 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y bc bison build-essential ca-certificates cpio curl flex git libelf-dev libssl-dev python3 rsync unzip wget zip device-tree-compiler libncurses-dev liblz4-tool lz4 patch
-
       - name: Clone kernel source
         run: |
-          git clone --depth=1 https://github.com/samsung-sm8450/android_kernel_samsung_sm8450 kernel
-          echo "KD=$GITHUB_WORKSPACE/kernel" >> "$GITHUB_ENV"
-
+          git clone --depth=1 https://github.com/mfdl/android_kernel_samsung_sm8450 kernel
+          echo "KD=$GITHUB_WORKSPACE/kernel/kernel_platform/msm-kernel" >> "$GITHUB_ENV"
       - name: Clone Clang
         run: |
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b "$HOME/tc/clang"
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b $HOME/tc/clang
           echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
-
       - name: Clone GCC
         run: |
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 "$HOME/tc/gcc64"
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$HOME/tc/gcc32"
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 $HOME/tc/gcc64
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 $HOME/tc/gcc32
           echo "G64=$HOME/tc/gcc64/bin" >> "$GITHUB_ENV"
           echo "G32=$HOME/tc/gcc32/bin" >> "$GITHUB_ENV"
-
+      - name: Verify kernel dir
+        run: |
+          ls "$KD/Makefile" && echo OK || { find "$GITHUB_WORKSPACE/kernel" -maxdepth 6 -name Makefile | head -20; exit 1; }
       - name: Build kernel
         shell: bash
         run: |
@@ -39,33 +38,29 @@ jobs:
           F=(ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- O=out)
           make "${F[@]}" r0q_defconfig 2>&1 | tee /tmp/defconfig.log
           [ ${PIPESTATUS[0]} -eq 0 ] || { tail -50 /tmp/defconfig.log; exit 1; }
-          { echo "CONFIG_KSU=y"; echo "CONFIG_USB_GADGET=y"; echo "CONFIG_USB_CONFIGFS=y"; echo "CONFIG_USB_CONFIGFS_F_HID=y"; echo "CONFIG_USB_NET_DRIVERS=y"; echo "CONFIG_USB_USBNET=y"; echo "CONFIG_TUN=y"; echo "CONFIG_NETFILTER=y"; echo "CONFIG_IP_NF_IPTABLES=y"; echo "CONFIG_IP_NF_NAT=y"; echo "CONFIG_PACKET=y"; } >> out/.config
+          { echo CONFIG_KSU=y; echo CONFIG_USB_GADGET=y; echo CONFIG_USB_CONFIGFS=y; echo CONFIG_USB_CONFIGFS_F_HID=y; echo CONFIG_USB_NET_DRIVERS=y; echo CONFIG_USB_USBNET=y; echo CONFIG_TUN=y; echo CONFIG_NETFILTER=y; echo CONFIG_IP_NF_IPTABLES=y; echo CONFIG_IP_NF_NAT=y; echo CONFIG_PACKET=y; } >> out/.config
           make "${F[@]}" olddefconfig 2>&1 | tee /tmp/olddefconfig.log
           make "${F[@]}" -j$(nproc --all) Image 2>&1 | tee /tmp/build.log
           [ ${PIPESTATUS[0]} -eq 0 ] || { tail -150 /tmp/build.log; exit 1; }
           echo "IMG=$KD/out/arch/arm64/boot/Image" >> "$GITHUB_ENV"
-
       - name: Package AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 /tmp/AK
           cp "$IMG" /tmp/AK/
           cd /tmp/AK && zip -r9 "$GITHUB_WORKSPACE/NH-S901E.zip" . -x "*.git*"
           echo "ZIP=$GITHUB_WORKSPACE/NH-S901E.zip" >> "$GITHUB_ENV"
-
       - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
           name: NH-S901E-Image
           path: ${{ env.IMG }}
           if-no-files-found: error
-
       - name: Upload zip
         uses: actions/upload-artifact@v4
         with:
           name: NH-S901E-zip
           path: ${{ env.ZIP }}
           if-no-files-found: warn
-
       - name: Dump logs on failure
         if: failure()
         run: |
