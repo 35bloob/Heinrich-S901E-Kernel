@@ -96,3 +96,4 @@ CONFIG_SECURITY_SELINUX_DEVELOP=y
           cat /tmp/dc.log 2>/dev/null||true
           tail -150 /tmp/bld.log 2>/dev/null||true
           find $GITHUB_WORKSPACE -name Makefile -maxdepth 5
+# force refresh Fri Apr 24 22:49:57 SAST 2026
