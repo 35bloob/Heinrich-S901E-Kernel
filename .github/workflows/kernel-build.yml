@@ -10,6 +10,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
       - name: Checkout
@@ -28,13 +30,16 @@ jobs:
 
       - name: Download clang
         run: |
+          rm -rf "$HOME/tc/clang" "$HOME/tc/clang-src"
           mkdir -p "$HOME/tc/clang"
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r416183b.tar.gz -O /tmp/cl.tar.gz
-          tar -xf /tmp/cl.tar.gz -C "$HOME/tc/clang"
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b "$HOME/tc/clang-src"
+          cp -a "$HOME/tc/clang-src/." "$HOME/tc/clang/"
+          test -x "$HOME/tc/clang/bin/clang"
           echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
 
       - name: Download gcc
         run: |
+          rm -rf "$HOME/tc/gcc64" "$HOME/tc/gcc32"
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 "$HOME/tc/gcc64"
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$HOME/tc/gcc32"
           echo "G64=$HOME/tc/gcc64/bin" >> "$GITHUB_ENV"
@@ -73,22 +78,6 @@ jobs:
 
           {
             echo "CONFIG_KSU=y"
-            echo "CONFIG_CFG80211=y"
-            echo "CONFIG_CFG80211_WEXT=y"
-            echo "CONFIG_MAC80211=y"
-            echo "CONFIG_MAC80211_MESH=y"
-            echo "CONFIG_BT=y"
-            echo "CONFIG_BT_BREDR=y"
-            echo "CONFIG_BT_LE=y"
-            echo "CONFIG_BT_RFCOMM=y"
-            echo "CONFIG_BT_RFCOMM_TTY=y"
-            echo "CONFIG_BT_BNEP=y"
-            echo "CONFIG_BT_HIDP=y"
-            echo "CONFIG_BT_HCIBTUSB=y"
-            echo "CONFIG_BT_HCIBTUSB_BCM=y"
-            echo "CONFIG_BT_HCIBTUSB_RTL=y"
-            echo "CONFIG_BT_HCIUART=y"
-            echo "CONFIG_BT_HCIVHCI=y"
             echo "CONFIG_USB_GADGET=y"
             echo "CONFIG_USB_CONFIGFS=y"
             echo "CONFIG_USB_CONFIGFS_RNDIS=y"
@@ -100,9 +89,6 @@ jobs:
             echo "CONFIG_IP_NF_IPTABLES=y"
             echo "CONFIG_IP_NF_NAT=y"
             echo "CONFIG_PACKET=y"
-            echo "CONFIG_ANDROID_BINDER_IPC=y"
-            echo "CONFIG_SECURITY_SELINUX_BOOTPARAM=y"
-            echo "CONFIG_SECURITY_SELINUX_DEVELOP=y"
           } >> out/.config
 
           make "${F[@]}" olddefconfig 2>&1 | tee /tmp/olddefconfig.log
