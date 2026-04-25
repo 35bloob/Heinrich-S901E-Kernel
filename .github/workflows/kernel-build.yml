@@ -35,6 +35,11 @@ jobs:
           git clone --depth=1 --single-branch -b master https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 $HOME/tc/gcc32
           echo "G64=$HOME/tc/gcc64/bin" >> "$GITHUB_ENV"
           echo "G32=$HOME/tc/gcc32/bin" >> "$GITHUB_ENV"
+            - name: Verify Clang Path
+        run: | 
+          ls -R $GITHUB_WORKSPACE/tc/clang/ | grep bin || true
+          which clang || true
+          clang --version || true
       - name: Verify kernel dir
         run: |
           ls "$KD/Makefile" && echo OK || { find "$GITHUB_WORKSPACE/kernel" -maxdepth 6 -name Makefile | head -20; exit 1; }
