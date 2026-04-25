@@ -18,7 +18,7 @@ jobs:
           echo "KD=$GITHUB_WORKSPACE/kernel/android_kernel_samsung_sm8450" >> "$GITHUB_ENV"
       - name: Clone Clang
         run: |
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r450784d $HOME/tc/clang
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r458507 $HOME/tc/clang
           echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
       - name: Clone GCC
         run: |
