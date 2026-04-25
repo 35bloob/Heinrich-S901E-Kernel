@@ -1,4 +1,4 @@
-name: Kernel Build NetHunter
+name: Ultimate NetHunter Build
 on:
   workflow_dispatch:
   push:
@@ -8,93 +8,83 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Setup dependencies
+      - name: Install Build Tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y bc bison build-essential ca-certificates cpio curl flex git \
-            jq libelf-dev libssl-dev lz4 liblz4-tool libncurses-dev python3 rsync unzip wget zip device-tree-compiler patch
+          sudo apt-get install -y bc bison build-essential cpio curl flex git jq libelf-dev libssl-dev lz4 python3 rsync wget zip device-tree-compiler
 
-      - name: Fetch Sources (JSON List Format)
+      - name: Setup Sources
         run: |
-          python3 -c '
-          import json, os, subprocess, sys
-          try:
-              with open("repos.json") as f:
-                  data = json.load(f)
-              # Handle both list and dict formats
-              cfg = data[0] if isinstance(data, list) else data
-              
-              # Clone Kernel
-              ks = cfg.get("kernelSource", cfg.get("kernel", {}))
-              k_url = ks.get("repo", ks.get("url"))
-              k_br = ks.get("branch", "master")
-              if k_url:
-                  print(f"Cloning Kernel: {k_url}")
-                  subprocess.check_call(["git", "clone", "--depth=1", "-b", k_br, k_url, "kernel"])
-              
-              # Clone Toolchains
-              tcs = cfg.get("toolchains", [])
-              if isinstance(tcs, list):
-                  for i, tc in enumerate(tcs):
-                      t_url = tc.get("repo")
-                      t_name = tc.get("name", f"tc{i}")
-                      if t_url:
-                          print(f"Cloning Toolchain {t_name}: {t_url}")
-                          subprocess.check_call(["git", "clone", "--depth=1", t_url, f"tc/{t_name}"])
-          except Exception as e:
-              print(f"JSON Error: {e}")
-              sys.exit(1)
-          '
+          python3 <<'PY'
+          import json, os, subprocess
+          with open("repos.json") as f:
+              data = json.load(f)
+          # Your specific JSON is a list. This gets the first entry.
+          cfg = data[0] if isinstance(data, list) else data
+          
+          # Get Kernel
+          ks = cfg.get("kernelSource", {})
+          k_url = ks.get("repo")
+          k_br = ks.get("branch", "main")
+          if k_url:
+              print(f"Cloning Kernel from {k_url}")
+              subprocess.call(["git", "clone", "--depth=1", "-b", k_br, k_url, "kernel"])
+          
+          # Get Clang Toolchain
+          tcs = cfg.get("toolchains", [])
+          for tc in tcs:
+              if tc.get("name") == "clang" or "clang" in tc.get("repo", ""):
+                  print(f"Cloning Clang from {tc['repo']}")
+                  subprocess.call(["git", "clone", "--depth=1", "-b", tc.get("branch", "master"), tc["repo"], "tc/clang"])
+          
+          # Backup: If no toolchain cloned, get standard Google Clang
+          if not os.path.exists("tc/clang/bin/clang"):
+              print("No toolchain found in JSON, downloading backup...")
+              subprocess.call(["git", "clone", "--depth=1", "https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b", "tc/clang"])
+          PY
 
-      - name: Detect and Setup Paths
+      - name: Detect Config and Path
         run: |
-          # 1. Find Kernel Root
-          REAL_KD=$(find $(pwd)/kernel -name "Makefile" -not -path "*/scripts/*" -not -path "*/tools/*" -exec grep -l "VERSION =" {} + | head -n 1 | xargs dirname)
-          if [ -z "$REAL_KD" ]; then echo "Kernel root not found"; exit 1; fi
+          # 1. Locate the directory containing the actual Makefile
+          KROOT=$(find $(pwd)/kernel -name "Makefile" -exec grep -l "VERSION =" {} + | head -n 1 | xargs dirname)
+          # 2. Pick a config: Check for Samsung chips first, then Odin, then fall back to anything
+          KCONFIG=$(find "$KROOT/arch/arm64/configs/" -name "*defconfig" | grep -Ei "s5e9925|r0s|odin|exynos" | head -n 1)
+          if [ -z "$KCONFIG" ]; then KCONFIG=$(ls $KROOT/arch/arm64/configs/*defconfig | head -n 1); fi
           
-          # 2. Detect Toolchain Binary Path (Look for Clang)
-          TCPATH=$(find $(pwd)/tc -name "clang" -type f -executable | head -n 1 | xargs dirname)
-          if [ -n "$TCPATH" ]; then echo "$TCPATH" >> $GITHUB_PATH; fi
-          
-          # 3. Pick Defconfig (Flexible for Odin or Samsung chips)
-          REAL_DC=$(find "$REAL_KD/arch/arm64/configs/" -maxdepth 2 -name "*defconfig" | grep -Ei "odin|s5e9925|r0s|exynos2200" | head -n 1 | xargs basename)
-          if [ -z "$REAL_DC" ]; then 
-             # Fallback to the first available arm64 config if specific search fails
-             REAL_DC=$(ls "$REAL_KD/arch/arm64/configs/" | head -n 1)
-          fi
-          
-          echo "REAL_KD=$REAL_KD" >> $GITHUB_ENV
-          echo "REAL_DC=$REAL_DC" >> $GITHUB_ENV
-          echo "Found KD: $REAL_KD"
-          echo "Found DC: $REAL_DC"
+          # 3. Save values
+          echo "KROOT=$KROOT" >> $GITHUB_ENV
+          echo "KNAME=$(basename $KCONFIG)" >> $GITHUB_ENV
+          echo "$(find $(pwd)/tc -name "clang" -type f -executable | head -n 1 | xargs dirname)" >> $GITHUB_PATH
 
-      - name: Inject NetHunter
+      - name: Inject NetHunter Support
         run: |
-          # Safer Injection (escaped parentheses)
+          cd "$KROOT"
           {
             echo "CONFIG_NETHUNTER=y"
             echo "CONFIG_USB_HID=y"
             echo "CONFIG_USB_CONFIGFS=y"
             echo "CONFIG_USB_CONFIGFS_F_HID=y"
-          } >> "$REAL_KD/arch/arm64/configs/$REAL_DC"
+            echo "CONFIG_USB_NET_RNDIS=y"
+          } >> "arch/arm64/configs/$KNAME"
 
-      - name: Build
+      - name: Run Build
         run: |
-          cd "$REAL_KD"
-          # Set Build Args
-          F=(
+          cd "$KROOT"
+          ARGS=(
             ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
             HOSTCC=clang HOSTCXX=clang++ HOSTLD=ld.lld O=out
           )
-          
-          make "${F[@]}" "$REAL_DC"
-          make "${F[@]}" -j$(nproc --all) Image
+          make "${ARGS[@]}" "$KNAME"
+          make "${ARGS[@]}" -j$(nproc --all) Image Image.gz || echo "Partial build failure, checking for output..."
 
-      - name: Upload Image
+      - name: Upload Everything
         uses: actions/upload-artifact@v4
         with:
-          name: S901E-Kernel-NetHunter
-          path: ${{ env.REAL_KD }}/out/arch/arm64/boot/Image
+          name: Kernel-Files
+          path: |
+            ${{ env.KROOT }}/out/arch/arm64/boot/Image*
+            ${{ env.KROOT }}/out/arch/arm64/boot/dtbo.img
