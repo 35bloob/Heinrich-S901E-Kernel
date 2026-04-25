@@ -14,7 +14,7 @@ jobs:
           sudo apt-get install -y bc bison build-essential ca-certificates cpio curl flex git libelf-dev libssl-dev python3 rsync unzip wget zip device-tree-compiler libncurses-dev liblz4-tool lz4 patch
       - name: Clone kernel source
         run: |
-          git clone --depth=1 https://github.com/mfdl/android_kernel_samsung_sm8450 kernel
+          git clone --depth=1 https://github.com/hasanbulat/s22-s901e-kernel kernel
           echo "KD=$GITHUB_WORKSPACE/kernel" >> "$GITHUB_ENV"
       - name: Clone Clang
         run: |
@@ -29,6 +29,13 @@ jobs:
       - name: Verify kernel dir
         run: |
           ls "$KD/Makefile" && echo OK || { find "$GITHUB_WORKSPACE/kernel" -maxdepth 6 -name Makefile | head -20; exit 1; }
+      - name: Find defconfig
+        run: |
+          echo "=== Available defconfigs ==="
+          find "$KD" -name "*defconfig*" | grep -v ".git" | sort | head -30
+          echo "=== KD contents ==="
+          ls "$KD/arch/arm64/configs/" 2>/dev/null | grep -i "r0q\|s901\|vendor" | head -20 || echo none
+
       - name: Build kernel
         shell: bash
         run: |
