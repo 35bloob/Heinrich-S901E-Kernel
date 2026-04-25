@@ -15,7 +15,7 @@ jobs:
           sudo apt-get install -y bc bison build-essential ca-certificates cpio curl flex git libelf-dev libssl-dev python3 rsync unzip wget zip device-tree-compiler libncurses-dev liblz4-tool lz4 patch
       - name: Clone kernel source
         run: |
-          git clone --depth=1 https://github.com/hasanbulat/s22-s901e-kernel kernel
+          git clone --depth=1 --single-branch -b master https://github.com/hasanbulat/s22-s901e-kernel kernel
           echo "KD=$GITHUB_WORKSPACE/kernel/android_kernel_samsung_sm8450" >> "$GITHUB_ENV"
       - name: Install Clang
         run: |
@@ -31,8 +31,8 @@ jobs:
           echo "CP=/usr/bin" >> "$GITHUB_ENV"
       - name: Clone GCC
         run: |
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 $HOME/tc/gcc64
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 $HOME/tc/gcc32
+          git clone --depth=1 --single-branch -b master https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 $HOME/tc/gcc64
+          git clone --depth=1 --single-branch -b master https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 $HOME/tc/gcc32
           echo "G64=$HOME/tc/gcc64/bin" >> "$GITHUB_ENV"
           echo "G32=$HOME/tc/gcc32/bin" >> "$GITHUB_ENV"
       - name: Verify kernel dir
@@ -65,7 +65,7 @@ jobs:
           echo "IMG=$KD/out/arch/arm64/boot/Image" >> "$GITHUB_ENV"
       - name: Package AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 /tmp/AK
+          git clone --depth=1 --single-branch -b master https://github.com/osm0sis/AnyKernel3 /tmp/AK
           cp "$IMG" /tmp/AK/
           cd /tmp/AK && zip -r9 "$GITHUB_WORKSPACE/NH-S901E.zip" . -x "*.git*"
           echo "ZIP=$GITHUB_WORKSPACE/NH-S901E.zip" >> "$GITHUB_ENV"
