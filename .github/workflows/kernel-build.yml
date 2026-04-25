@@ -16,10 +16,18 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/hasanbulat/s22-s901e-kernel kernel
           echo "KD=$GITHUB_WORKSPACE/kernel/android_kernel_samsung_sm8450" >> "$GITHUB_ENV"
-      - name: Clone Clang
+      - name: Install Clang
         run: |
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r458507 $HOME/tc/clang
-          echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-14 main" | sudo tee /etc/apt/sources.list.d/llvm14.list
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-14 llvm-14 lld-14
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-14 100
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/lld-14 100
+          for t in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+            sudo update-alternatives --install /usr/bin/$t $t /usr/bin/${t}-14 100
+          done
+          echo "CP=/usr/bin" >> "$GITHUB_ENV"
       - name: Clone GCC
         run: |
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 $HOME/tc/gcc64
