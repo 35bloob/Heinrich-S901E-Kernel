@@ -1,15 +1,14 @@
-name: Kernel Build S901E NetHunter
+name: Repo Inspect S901E
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 30
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -21,13 +20,27 @@ jobs:
           fetch-depth: 1
 
       - name: Inspect repo
+        shell: bash
         run: |
+          set -o pipefail
           echo "PWD=$(pwd)"
           echo "ROOT:"
           ls -la
+          echo
           echo "TOP DIRS:"
-          find . -maxdepth 3 -type d | sort | sed -n '1,200p'
+          find . -maxdepth 4 -type d | sort | sed -n '1,250p'
+          echo
+          echo "TOP FILES:"
+          find . -maxdepth 3 -type f | sort | sed -n '1,250p'
+          echo
+          echo ".gitmodules:"
+          [ -f .gitmodules ] && cat .gitmodules || echo "NO .gitmodules"
+          echo
+          echo "SUBMODULE STATUS:"
+          git submodule status --recursive || true
+          echo
           echo "MAKEFILES:"
           find . -type f -name Makefile | sort || true
+          echo
           echo "DEFCONFIGS:"
-          find . -type f ( -name '*defconfig' -o -name '*_defconfig' ) | sort | sed -n '1,200p' || true
+          find . -type f ( -name '*defconfig' -o -name '*_defconfig' ) | sort | sed -n '1,250p' || true
