@@ -18,7 +18,7 @@ jobs:
           echo "KD=$GITHUB_WORKSPACE/kernel/android_kernel_samsung_sm8450" >> "$GITHUB_ENV"
       - name: Clone Clang
         run: |
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b $HOME/tc/clang
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r450784d $HOME/tc/clang
           echo "CP=$HOME/tc/clang/bin" >> "$GITHUB_ENV"
       - name: Clone GCC
         run: |
@@ -42,7 +42,7 @@ jobs:
           set -o pipefail
           export PATH="$CP:$G64:$G32:$PATH"
           cd "$KD"
-          F=(ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- O=out)
+          F=(ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- O=out)
           DEFCFG=$(find "$KD/arch/arm64/configs" -maxdepth 1 -name "*r0q*" -o -name "*s901*" -o -name "*r0q*" 2>/dev/null | head -1)
           [ -z "$DEFCFG" ] && DEFCFG="gki_defconfig"
           DEFCFG=$(basename "$DEFCFG")
