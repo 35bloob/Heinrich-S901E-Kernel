@@ -15,7 +15,7 @@ jobs:
       - name: Clone kernel source
         run: |
           git clone --depth=1 https://github.com/mfdl/android_kernel_samsung_sm8450 kernel
-          echo "KD=$GITHUB_WORKSPACE/kernel/kernel_platform/msm-kernel" >> "$GITHUB_ENV"
+          echo "KD=$GITHUB_WORKSPACE/kernel" >> "$GITHUB_ENV"
       - name: Clone Clang
         run: |
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b $HOME/tc/clang
