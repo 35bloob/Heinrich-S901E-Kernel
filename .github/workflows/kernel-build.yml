@@ -1,4 +1,4 @@
-name: Repo Inspect S901E
+name: Kernel Build S901E NetHunter
 
 on:
   workflow_dispatch:
@@ -6,41 +6,90 @@ on:
     branches: [main]
 
 jobs:
-  inspect:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 180
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
-      - name: Checkout
+      - name: Checkout Meta-Repo
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
 
-      - name: Inspect repo
-        shell: bash
+      - name: Setup Build Environment
         run: |
-          set -o pipefail
-          echo "PWD=$(pwd)"
-          echo "ROOT:"
-          ls -la
-          echo
-          echo "TOP DIRS:"
-          find . -maxdepth 4 -type d | sort | sed -n '1,250p'
-          echo
-          echo "TOP FILES:"
-          find . -maxdepth 3 -type f | sort | sed -n '1,250p'
-          echo
-          echo ".gitmodules:"
-          [ -f .gitmodules ] && cat .gitmodules || echo "NO .gitmodules"
-          echo
-          echo "SUBMODULE STATUS:"
-          git submodule status --recursive || true
-          echo
-          echo "MAKEFILES:"
-          find . -type f -name Makefile | sort || true
-          echo
-          echo "DEFCONFIGS:"
-          find . -type f ( -name '*defconfig' -o -name '*_defconfig' ) | sort | sed -n '1,250p' || true
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison lz4 libssl-dev libelf-dev clang lld llvm python3 git
+
+      - name: Clone Source and Toolchain
+        run: |
+          # Use Python to parse repos.json and clone
+          python3 -c '
+          import json, os
+          with open("repos.json") as f:
+              data = json.load(f)
+              os.system(f"git clone --depth=1 {data[\"kernel\"][\"url\"]} -b {data[\"kernel\"][\"branch\"]} kernel")
+              os.system(f"git clone --depth=1 {data[\"toolchain\"][\"url\"]} -b {data[\"toolchain\"][\"branch\"]} tc")
+          '
+
+      - name: Align Toolchain Path
+        run: |
+          # Add Clang binaries to PATH
+          echo "$(pwd)/tc/bin" >> $GITHUB_PATH
+          echo "Toolchain initialized"
+
+      - name: Configure NetHunter (HID/GADGET)
+        run: |
+          cd kernel
+          # We look for the common Samsung S22/Exynos 2200 defconfig
+          # If yours is named differently, update the filename below
+          DEFCONFIG="arch/arm64/configs/s5e9925_q_defconfig"
+          if [ -f "$DEFCONFIG" ]; then
+            {
+              echo "CONFIG_NETHUNTER=y"
+              echo "CONFIG_USB_HID=y"
+              echo "CONFIG_USB_NET_RNDIS=y"
+              echo "CONFIG_USB_GADGET=y"
+              echo "CONFIG_USB_CONFIGFS=y"
+              echo "CONFIG_USB_CONFIGFS_F_HID=y"
+            } >> "$DEFCONFIG"
+            echo "NetHunter flags injected into $DEFCONFIG"
+          else
+            echo "Warning: Could not find $DEFCONFIG"
+          fi
+
+      - name: Build Kernel
+        run: |
+          cd kernel
+          mkdir -p out
+          
+          # Setting HOSTCC and HOSTLD to the toolchain clang prevents LLVM 18 mismatch
+          ARGS=(
+            ARCH=arm64
+            LLVM=1
+            LLVM_IAS=1
+            CC=clang
+            LD=ld.lld
+            AR=llvm-ar
+            NM=llvm-nm
+            OBJCOPY=llvm-objcopy
+            OBJDUMP=llvm-objdump
+            STRIP=llvm-strip
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            HOSTCC=clang
+            HOSTCXX=clang++
+            HOSTLD=ld.lld
+            O=out
+          )
+
+          make "${ARGS[@]}" s5e9925_q_defconfig
+          make "${ARGS[@]}" -j$(nproc --all)
+
+      - name: Upload Kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: Heinrich-S901E-Kernel
+          path: |
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/arch/arm64/boot/dtbo.img
