@@ -1,5 +1,4 @@
-name: Kernel Build S901E NetHunter
-
+name: Kernel Build NetHunter
 on:
   workflow_dispatch:
   push:
@@ -8,10 +7,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,62 +17,84 @@ jobs:
           sudo apt-get install -y bc bison build-essential ca-certificates cpio curl flex git \
             jq libelf-dev libssl-dev lz4 liblz4-tool libncurses-dev python3 rsync unzip wget zip device-tree-compiler patch
 
-      - name: Fetch Kernel and Toolchain
+      - name: Fetch Sources (JSON List Format)
         run: |
-          # Robust cloning from repos.json
           python3 -c '
-          import json, os, subprocess
-          with open("repos.json") as f:
-              data = json.load(f)
-              k_url = data.get("kernel", {}).get("url")
-              k_br = data.get("kernel", {}).get("branch", "master")
-              t_url = data.get("toolchain", {}).get("url")
-              t_br = data.get("toolchain", {}).get("branch", "master")
-              if k_url: subprocess.check_call(["git", "clone", "--depth=1", "-b", k_br, k_url, "kernel"])
-              if t_url: subprocess.check_call(["git", "clone", "--depth=1", "-b", t_br, t_url, "tc"])
+          import json, os, subprocess, sys
+          try:
+              with open("repos.json") as f:
+                  data = json.load(f)
+              # Handle both list and dict formats
+              cfg = data[0] if isinstance(data, list) else data
+              
+              # Clone Kernel
+              ks = cfg.get("kernelSource", cfg.get("kernel", {}))
+              k_url = ks.get("repo", ks.get("url"))
+              k_br = ks.get("branch", "master")
+              if k_url:
+                  print(f"Cloning Kernel: {k_url}")
+                  subprocess.check_call(["git", "clone", "--depth=1", "-b", k_br, k_url, "kernel"])
+              
+              # Clone Toolchains
+              tcs = cfg.get("toolchains", [])
+              if isinstance(tcs, list):
+                  for i, tc in enumerate(tcs):
+                      t_url = tc.get("repo")
+                      t_name = tc.get("name", f"tc{i}")
+                      if t_url:
+                          print(f"Cloning Toolchain {t_name}: {t_url}")
+                          subprocess.check_call(["git", "clone", "--depth=1", t_url, f"tc/{t_name}"])
+          except Exception as e:
+              print(f"JSON Error: {e}")
+              sys.exit(1)
           '
 
-      - name: Smart Detect Paths
+      - name: Detect and Setup Paths
         run: |
-          # Samsung sources are often nested. Find the real Makefile.
+          # 1. Find Kernel Root
           REAL_KD=$(find $(pwd)/kernel -name "Makefile" -not -path "*/scripts/*" -not -path "*/tools/*" -exec grep -l "VERSION =" {} + | head -n 1 | xargs dirname)
-          if [ -z "$REAL_KD" ]; then echo "ERROR: Could not find Kernel Makefile"; exit 1; fi
+          if [ -z "$REAL_KD" ]; then echo "Kernel root not found"; exit 1; fi
           
-          # Find the defconfig
-          REAL_DC=$(find "$REAL_KD/arch/arm64/configs/" -name "*defconfig" | grep -E "s5e9925|r0s|exynos2200" | head -n 1 | xargs basename)
+          # 2. Detect Toolchain Binary Path (Look for Clang)
+          TCPATH=$(find $(pwd)/tc -name "clang" -type f -executable | head -n 1 | xargs dirname)
+          if [ -n "$TCPATH" ]; then echo "$TCPATH" >> $GITHUB_PATH; fi
+          
+          # 3. Pick Defconfig (Flexible for Odin or Samsung chips)
+          REAL_DC=$(find "$REAL_KD/arch/arm64/configs/" -maxdepth 2 -name "*defconfig" | grep -Ei "odin|s5e9925|r0s|exynos2200" | head -n 1 | xargs basename)
+          if [ -z "$REAL_DC" ]; then 
+             # Fallback to the first available arm64 config if specific search fails
+             REAL_DC=$(ls "$REAL_KD/arch/arm64/configs/" | head -n 1)
+          fi
           
           echo "REAL_KD=$REAL_KD" >> $GITHUB_ENV
           echo "REAL_DC=$REAL_DC" >> $GITHUB_ENV
-          echo "Detected Path: $REAL_KD"
-          echo "Detected Config: $REAL_DC"
-          
-          # Handle toolchain path
-          TCPATH=$(find $(pwd)/tc -name "clang" -type f -executable | head -n 1 | xargs dirname)
-          echo "$TCPATH" >> $GITHUB_PATH
+          echo "Found KD: $REAL_KD"
+          echo "Found DC: $REAL_DC"
 
-      - name: NetHunter Injections
+      - name: Inject NetHunter
         run: |
-          cd "$REAL_KD"
+          # Safer Injection (escaped parentheses)
           {
             echo "CONFIG_NETHUNTER=y"
             echo "CONFIG_USB_HID=y"
             echo "CONFIG_USB_CONFIGFS=y"
             echo "CONFIG_USB_CONFIGFS_F_HID=y"
-          } >> "arch/arm64/configs/$REAL_DC"
+          } >> "$REAL_KD/arch/arm64/configs/$REAL_DC"
 
       - name: Build
         run: |
           cd "$REAL_KD"
-          ARGS=(
+          # Set Build Args
+          F=(
             ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld
-            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
             HOSTCC=clang HOSTCXX=clang++ HOSTLD=ld.lld O=out
           )
-          make "${ARGS[@]}" "$REAL_DC"
-          make "${ARGS[@]}" -j$(nproc --all) Image
+          
+          make "${F[@]}" "$REAL_DC"
+          make "${F[@]}" -j$(nproc --all) Image
 
-      - name: Upload
+      - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
-          name: S901E-Kernel
+          name: S901E-Kernel-NetHunter
           path: ${{ env.REAL_KD }}/out/arch/arm64/boot/Image
