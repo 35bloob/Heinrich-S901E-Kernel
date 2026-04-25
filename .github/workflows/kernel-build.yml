@@ -43,7 +43,11 @@ jobs:
           export PATH="$CP:$G64:$G32:$PATH"
           cd "$KD"
           F=(ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- O=out)
-          make "${F[@]}" r0q_defconfig 2>&1 | tee /tmp/defconfig.log
+          DEFCFG=$(find "$KD/arch/arm64/configs" -maxdepth 1 -name "*r0q*" -o -name "*s901*" -o -name "*r0q*" 2>/dev/null | head -1)
+          [ -z "$DEFCFG" ] && DEFCFG="gki_defconfig"
+          DEFCFG=$(basename "$DEFCFG")
+          echo "Using defconfig: $DEFCFG"
+          make "${F[@]}" "$DEFCFG" 2>&1 | tee /tmp/defconfig.log
           [ ${PIPESTATUS[0]} -eq 0 ] || { tail -50 /tmp/defconfig.log; exit 1; }
           { echo CONFIG_KSU=y; echo CONFIG_USB_GADGET=y; echo CONFIG_USB_CONFIGFS=y; echo CONFIG_USB_CONFIGFS_F_HID=y; echo CONFIG_USB_NET_DRIVERS=y; echo CONFIG_USB_USBNET=y; echo CONFIG_TUN=y; echo CONFIG_NETFILTER=y; echo CONFIG_IP_NF_IPTABLES=y; echo CONFIG_IP_NF_NAT=y; echo CONFIG_PACKET=y; } >> out/.config
           make "${F[@]}" olddefconfig 2>&1 | tee /tmp/olddefconfig.log
