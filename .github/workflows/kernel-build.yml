@@ -13,58 +13,128 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
-      - name: Checkout Meta-Repo
+      - name: Checkout meta repo
         uses: actions/checkout@v4
 
-      - name: Setup Build Environment
+      - name: Setup deps
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison lz4 libssl-dev libelf-dev clang lld llvm python3 git
+          set -o pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            bc bison build-essential ca-certificates cpio curl flex git \
+            jq libelf-dev libssl-dev lz4 liblz4-tool libncurses-dev \
+            python3 rsync unzip wget zip device-tree-compiler patch
 
-      - name: Clone Source and Toolchain
+      - name: Show manifest
+        shell: bash
         run: |
-          # Use Python to parse repos.json and clone
-          python3 -c '
-          import json, os
-          with open("repos.json") as f:
+          echo "ROOT:"
+          ls -la
+          echo
+          echo "repos.json:"
+          cat repos.json
+
+      - name: Clone sources from repos.json
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 <<'PY'
+          import json, os, subprocess, sys
+          with open("repos.json","r",encoding="utf-8") as f:
               data = json.load(f)
-              os.system(f"git clone --depth=1 {data[\"kernel\"][\"url\"]} -b {data[\"kernel\"][\"branch\"]} kernel")
-              os.system(f"git clone --depth=1 {data[\"toolchain\"][\"url\"]} -b {data[\"toolchain\"][\"branch\"]} tc")
-          '
 
-      - name: Align Toolchain Path
-        run: |
-          # Add Clang binaries to PATH
-          echo "$(pwd)/tc/bin" >> $GITHUB_PATH
-          echo "Toolchain initialized"
+          def pick(*names):
+              for n in names:
+                  if n in data and isinstance(data[n], dict):
+                      return data[n]
+              return None
 
-      - name: Configure NetHunter (HID/GADGET)
+          kernel = pick("kernel", "source", "kernel_source")
+          toolchain = pick("toolchain", "clang", "compiler")
+
+          if not kernel or "url" not in kernel:
+              print("repos.json missing kernel url", file=sys.stderr)
+              sys.exit(1)
+
+          kbranch = kernel.get("branch", "main")
+          subprocess.check_call(["git","clone","--depth=1","-b",kbranch,kernel["url"],"kernel"])
+
+          if toolchain and "url" in toolchain:
+              tbranch = toolchain.get("branch", "main")
+              subprocess.check_call(["git","clone","--depth=1","-b",tbranch,toolchain["url"],"tc"])
+          PY
+
+          echo
+          echo "KERNEL TREE TOP:"
+          find kernel -maxdepth 3 -type d | sort | sed -n '1,200p'
+          echo
+          echo "KERNEL MAKEFILES:"
+          find kernel -type f -name Makefile | sort | sed -n '1,200p'
+          echo
+          echo "KERNEL DEFCONFIGS:"
+          find kernel -type f ( -name '*defconfig' -o -name '*_defconfig' ) | sort | sed -n '1,200p'
+
+      - name: Detect kernel root and defconfig
+        shell: bash
         run: |
-          cd kernel
-          # We look for the common Samsung S22/Exynos 2200 defconfig
-          # If yours is named differently, update the filename below
-          DEFCONFIG="arch/arm64/configs/s5e9925_q_defconfig"
-          if [ -f "$DEFCONFIG" ]; then
-            {
-              echo "CONFIG_NETHUNTER=y"
-              echo "CONFIG_USB_HID=y"
-              echo "CONFIG_USB_NET_RNDIS=y"
-              echo "CONFIG_USB_GADGET=y"
-              echo "CONFIG_USB_CONFIGFS=y"
-              echo "CONFIG_USB_CONFIGFS_F_HID=y"
-            } >> "$DEFCONFIG"
-            echo "NetHunter flags injected into $DEFCONFIG"
+          set -o pipefail
+
+          if [ -f kernel/kernel_platform/common/Makefile ]; then
+            KD="$GITHUB_WORKSPACE/kernel/kernel_platform/common"
+          elif [ -f kernel/kernel_platform/msm-kernel/Makefile ]; then
+            KD="$GITHUB_WORKSPACE/kernel/kernel_platform/msm-kernel"
+          elif [ -f kernel/Makefile ]; then
+            KD="$GITHUB_WORKSPACE/kernel"
           else
-            echo "Warning: Could not find $DEFCONFIG"
+            echo "::error::No kernel Makefile found after clone"
+            find kernel -type f -name Makefile | sort
+            exit 1
           fi
 
-      - name: Build Kernel
+          DC=""
+          for x in \
+            exynos2200_r0s_defconfig \
+            exynos2200_defconfig \
+            r0q_defconfig \
+            r0s_defconfig \
+            s5e9925_defconfig \
+            s5e9925_q_defconfig
+          do
+            find "$KD" -type f -name "$x" | grep -q . && DC="$x" && break
+          done
+
+          if [ -z "$DC" ]; then
+            DC="$(find "$KD" -type f ( -name '*r0*defconfig' -o -name '*exynos*defconfig' -o -name '*s5e9925*defconfig' ) | sed 's#^.*/##' | head -n 1)"
+          fi
+
+          [ -n "$DC" ] || { echo "::error::No suitable defconfig found"; exit 1; }
+
+          echo "KD=$KD" >> "$GITHUB_ENV"
+          echo "DC=$DC" >> "$GITHUB_ENV"
+          echo "Detected KD=$KD"
+          echo "Detected DC=$DC"
+
+      - name: Setup clang
+        shell: bash
         run: |
-          cd kernel
-          mkdir -p out
-          
-          # Setting HOSTCC and HOSTLD to the toolchain clang prevents LLVM 18 mismatch
-          ARGS=(
+          set -o pipefail
+          if [ -x "$GITHUB_WORKSPACE/tc/bin/clang" ]; then
+            echo "$GITHUB_WORKSPACE/tc/bin" >> "$GITHUB_PATH"
+          else
+            git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b /tmp/clang
+            cp -a /tmp/clang/. "$RUNNER_TEMP/clang/"
+            echo "$RUNNER_TEMP/clang/bin" >> "$GITHUB_PATH"
+          fi
+          clang --version || true
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$KD"
+
+          F=(
             ARCH=arm64
             LLVM=1
             LLVM_IAS=1
@@ -75,21 +145,63 @@ jobs:
             OBJCOPY=llvm-objcopy
             OBJDUMP=llvm-objdump
             STRIP=llvm-strip
-            CROSS_COMPILE=aarch64-linux-gnu-
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            CROSS_COMPILE=aarch64-linux-android-
+            CROSS_COMPILE_ARM32=arm-linux-androideabi-
             HOSTCC=clang
             HOSTCXX=clang++
+            HOSTAR=llvm-ar
             HOSTLD=ld.lld
             O=out
           )
 
-          make "${ARGS[@]}" s5e9925_q_defconfig
-          make "${ARGS[@]}" -j$(nproc --all)
+          make "${F[@]}" "$DC" 2>&1 | tee /tmp/defconfig.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -100 /tmp/defconfig.log; exit 1; }
 
-      - name: Upload Kernel
+          {
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_USB_GADGET=y"
+            echo "CONFIG_USB_CONFIGFS=y"
+            echo "CONFIG_USB_CONFIGFS_RNDIS=y"
+            echo "CONFIG_USB_CONFIGFS_F_HID=y"
+            echo "CONFIG_USB_HID=y"
+            echo "CONFIG_USB_NET_DRIVERS=y"
+            echo "CONFIG_USB_USBNET=y"
+            echo "CONFIG_USB_NET_RNDIS_HOST=y"
+            echo "CONFIG_TUN=y"
+            echo "CONFIG_PACKET=y"
+            echo "CONFIG_NETFILTER=y"
+          } >> out/.config
+
+          make "${F[@]}" olddefconfig 2>&1 | tee /tmp/olddefconfig.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -120 /tmp/olddefconfig.log; exit 1; }
+
+          make "${F[@]}" -j"$(nproc --all)" Image 2>&1 | tee /tmp/build.log
+          [ ${PIPESTATUS[0]} -eq 0 ] || { tail -150 /tmp/build.log; exit 1; }
+
+          test -f out/arch/arm64/boot/Image
+          echo "IMG=$KD/out/arch/arm64/boot/Image" >> "$GITHUB_ENV"
+
+      - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
-          name: Heinrich-S901E-Kernel
-          path: |
-            kernel/out/arch/arm64/boot/Image
-            kernel/out/arch/arm64/boot/dtbo.img
+          name: NH-S901E-Image
+          path: ${{ env.IMG }}
+          if-no-files-found: error
+
+      - name: Dump logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "=== REPOS ==="
+          cat repos.json || true
+          echo "=== MAKEFILES ==="
+          find kernel -type f -name Makefile | sort || true
+          echo "=== DEFCONFIGS ==="
+          find kernel -type f ( -name '*defconfig' -o -name '*_defconfig' ) | sort | sed -n '1,200p' || true
+          echo "=== DEFCONFIG ==="
+          cat /tmp/defconfig.log 2>/dev/null || true
+          echo "=== OLDDEFCONFIG ==="
+          cat /tmp/olddefconfig.log 2>/dev/null || true
+          echo "=== BUILD TAIL ==="
+          tail -150 /tmp/build.log 2>/dev/null || true
