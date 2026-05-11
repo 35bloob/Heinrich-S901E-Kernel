@@ -2,7 +2,7 @@
 # ============================================================
 # S22 StealthStation - Local Kernel Build Script
 # Run inside proot-distro Ubuntu on Termux
-# Usage: bash local_build.sh
+# ALL configs embedded - no private repo access needed
 # ============================================================
 set -e
 
@@ -20,7 +20,7 @@ echo "╚═══════════════════════�
 echo -e "${NC}"
 
 WORKDIR="$HOME/kernel-build"
-REPO_URL="https://github.com/35bloob/s22-stealth-station"
+NPROC=4
 
 # ── Step 1: Install dependencies ──
 echo -e "${YELLOW}[1/9] Installing build dependencies...${NC}"
@@ -33,17 +33,133 @@ echo -e "${GREEN}✓ Dependencies installed${NC}"
 
 # ── Step 2: Set up workspace ──
 echo -e "${YELLOW}[2/9] Setting up workspace...${NC}"
-mkdir -p "$WORKDIR"
+mkdir -p "$WORKDIR/configs" "$WORKDIR/anykernel"
 cd "$WORKDIR"
 
-# Clone repo for configs
-if [ -d repo ]; then
-  echo "Repo already cloned, pulling latest..."
-  cd repo && git pull --ff-only && cd ..
-else
-  git clone --depth=1 "$REPO_URL" repo
-fi
-echo -e "${GREEN}✓ Repo ready${NC}"
+# Write configs directly (no need to clone private repo)
+cat > configs/nethunter_fragment.config << 'NHEOF'
+# === NetHunter Core ===
+CONFIG_PACKET=y
+CONFIG_PACKET_DIAG=y
+CONFIG_CFG80211=y
+CONFIG_CFG80211_WEXT=y
+CONFIG_MAC80211=y
+CONFIG_MAC80211_MESH=y
+CONFIG_RFKILL=y
+# === USB WiFi (RTL8188FTV built-in) ===
+CONFIG_RTL8XXXU=y
+CONFIG_RTL8XXXU_UNTESTED=y
+CONFIG_RTL8188FU=y
+# === USB Gadget / HID attacks ===
+CONFIG_USB_GADGET=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_CONFIGFS_ECM=y
+CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+CONFIG_USB_CONFIGFS_F_FS=y
+CONFIG_USB_CONFIGFS_F_HID=y
+CONFIG_USB_HID=y
+CONFIG_HID=y
+CONFIG_HID_APPLE=y
+# === Bluetooth attacks ===
+CONFIG_BT=y
+CONFIG_BT_HCIBTUSB=y
+CONFIG_BT_HCIBTSDIO=y
+CONFIG_BT_RFCOMM=y
+CONFIG_BT_BNEP=y
+CONFIG_BT_HIDP=y
+# === Network / Traffic manipulation ===
+CONFIG_TUN=y
+CONFIG_TAP=y
+CONFIG_NETFILTER=y
+CONFIG_NETFILTER_ADVANCED=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_TABLES=y
+CONFIG_IP_NF_IPTABLES=y
+CONFIG_IP_NF_FILTER=y
+CONFIG_IP_NF_NAT=y
+CONFIG_IP_NF_MANGLE=y
+CONFIG_IP6_NF_IPTABLES=y
+CONFIG_IP6_NF_FILTER=y
+CONFIG_NETFILTER_XT_MATCH_POLICY=y
+CONFIG_NETFILTER_XT_TARGET_LOG=y
+# === Traffic shaping ===
+CONFIG_CGROUP_NET_PRIO=y
+CONFIG_NET_SCHED=y
+CONFIG_NET_SCH_HTB=y
+CONFIG_NET_SCH_INGRESS=y
+CONFIG_NET_CLS_FW=y
+# === Container / Namespace support ===
+CONFIG_NAMESPACES=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+CONFIG_USER_NS=y
+CONFIG_OVERLAY_FS=y
+# === Raw sockets / injection ===
+CONFIG_INET_RAW=y
+CONFIG_IPV6=y
+# === USB networking ===
+CONFIG_USB_NET_RNDIS_WLAN=y
+CONFIG_USB_NET_RNDIS_HOST=y
+CONFIG_USB_USBNET=y
+NHEOF
+
+cat > configs/extra_features.config << 'EFEOF'
+# === Advanced routing ===
+CONFIG_IP_ADVANCED_ROUTER=y
+CONFIG_IP_MULTIPLE_TABLES=y
+CONFIG_IP_ROUTE_MULTIPATH=y
+CONFIG_IPV6_MULTIPLE_TABLES=y
+CONFIG_IPV6_SUBTREES=y
+CONFIG_IP_MROUTE=y
+# === Tunneling ===
+CONFIG_NET_IPGRE=y
+CONFIG_NET_IPGRE_DEMUX=y
+CONFIG_VXLAN=y
+CONFIG_L2TP=y
+CONFIG_L2TP_IP=y
+CONFIG_L2TP_ETH=y
+# === VPN ===
+CONFIG_WIREGUARD=y
+CONFIG_CRYPTO_CHACHA20POLY1305=y
+CONFIG_CRYPTO_POLY1305=y
+# === Bridge / VLAN ===
+CONFIG_BRIDGE=y
+CONFIG_VLAN_8021Q=y
+# === Diagnostics ===
+CONFIG_NETLINK_DIAG=y
+CONFIG_UNIX_DIAG=y
+CONFIG_INET_DIAG=y
+CONFIG_INET_UDP_DIAG=y
+EFEOF
+
+cat > anykernel/anykernel.sh << 'AKEOF'
+# AnyKernel3 - S22 StealthStation
+# osm0sis @ xda-developers
+properties() { '
+kernel.string=S22 StealthStation NetHunter Kernel
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=SM-S901E
+device.name2=dm1s
+device.name3=s5e9925
+supported.versions=13-15
+'; }
+block=/dev/block/by-name/boot;
+is_slot_device=1;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+. tools/ak3-core.sh;
+. tools/boot_patch.sh "$KERNEL";
+AKEOF
+
+echo -e "${GREEN}✓ Workspace ready (all configs embedded)${NC}"
 
 # ── Step 3: Install GCC wrapper ──
 echo -e "${YELLOW}[3/9] Installing GCC warning-suppression wrapper...${NC}"
@@ -63,7 +179,6 @@ echo -e "${YELLOW}[4/9] Downloading Samsung kernel source...${NC}"
 mkdir -p kernel_src
 cd kernel_src
 
-# Download from GitHub release
 if [ ! -f ".downloaded" ]; then
   RELEASE_URL=$(curl -sL "https://api.github.com/repos/35bloob/s22-stealth-station/releases/tags/kernel-source" | python3 -c "
 import sys, json
@@ -71,12 +186,29 @@ data = json.load(sys.stdin)
 for a in data.get('assets', []):
     print(a['browser_download_url'])
     break
-")
+" 2>/dev/null)
+
   if [ -z "$RELEASE_URL" ]; then
-    echo -e "${RED}ERROR: Could not find kernel-source release${NC}"
-    echo "Make sure the 'kernel-source' release exists on your repo"
+    echo -e "${YELLOW}Private repo - trying public repo...${NC}"
+    RELEASE_URL=$(curl -sL "https://api.github.com/repos/35bloob/Heinrich-S901E-Kernel/releases/tags/kernel-source" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    print(a['browser_download_url'])
+    break
+" 2>/dev/null)
+  fi
+
+  if [ -z "$RELEASE_URL" ]; then
+    echo -e "${YELLOW}No release found. Downloading Samsung S901E source directly...${NC}"
+    # Fallback: download Samsung open source kernel
+    wget -q --show-progress "https://opensource.samsung.com/uploadSearch?searchValue=SM-S901E" -O /dev/null 2>/dev/null || true
+    echo -e "${RED}Please download the kernel source manually from https://opensource.samsung.com${NC}"
+    echo "Search for SM-S901E, download the kernel zip, place it in $PWD"
+    echo "Then run this script again."
     exit 1
   fi
+
   FNAME=$(basename "$RELEASE_URL")
   echo "Downloading $FNAME ..."
   wget -q --show-progress "$RELEASE_URL" -O "$FNAME"
@@ -88,7 +220,6 @@ for a in data.get('assets', []):
     tar xf "$FNAME"
   fi
 
-  # Extract any nested archives
   for f in *.tar.gz; do
     [ -f "$f" ] && echo "Extracting $f" && tar xzf "$f" || true
   done
@@ -290,8 +421,8 @@ if [ -d arch/arm64/configs/vendor ]; then
     cat "$frag" >> arch/arm64/configs/stealth_defconfig
   done
 fi
-cat "$WORKDIR/repo/configs/nethunter_fragment.config" >> arch/arm64/configs/stealth_defconfig
-cat "$WORKDIR/repo/configs/extra_features.config" >> arch/arm64/configs/stealth_defconfig
+cat "$WORKDIR/configs/nethunter_fragment.config" >> arch/arm64/configs/stealth_defconfig
+cat "$WORKDIR/configs/extra_features.config" >> arch/arm64/configs/stealth_defconfig
 printf 'CONFIG_WERROR=n\n# CONFIG_GCC_PLUGINS is not set\n' >> arch/arm64/configs/stealth_defconfig
 echo -e "${GREEN}✓ Config applied${NC}"
 
@@ -302,7 +433,7 @@ printf 'CONFIG_KPROBES=y\nCONFIG_HAVE_KPROBES=y\nCONFIG_KPROBE_EVENTS=y\n' >> ar
 echo -e "${GREEN}✓ KernelSU patched${NC}"
 
 # ── Step 9: BUILD ──
-echo -e "${YELLOW}[9/9] Building kernel...${NC}"
+echo -e "${YELLOW}[9/9] Building kernel with $NPROC cores...${NC}"
 echo -e "${CYAN}This will take a while on a phone. Go grab coffee ☕${NC}"
 echo ""
 
@@ -311,7 +442,6 @@ export CROSS_COMPILE=aarch64-linux-gnu-
 export PLATFORM_VERSION=13
 export ANDROID_MAJOR_VERSION=t
 
-# Last-resort cred.c fix
 python3 -c "
 p='kernel/cred.c'
 t=open(p).read()
@@ -323,7 +453,6 @@ make O=out stealth_defconfig
 sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' out/.config
 sed -i 's/CONFIG_GCC_PLUGINS=y/# CONFIG_GCC_PLUGINS is not set/' out/.config
 
-NPROC=4
 echo -e "Building with ${CYAN}$NPROC${NC} cores (limited to avoid overheating)..."
 make O=out -j"$NPROC" KCFLAGS="-w" Image 2>&1 | tee build.log
 
@@ -334,11 +463,10 @@ if [ -f out/arch/arm64/boot/Image ]; then
   echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
   echo ""
 
-  # Package with AnyKernel3
   echo "Packaging with AnyKernel3..."
   git clone --depth=1 https://github.com/osm0sis/AnyKernel3 /tmp/AnyKernel3 2>/dev/null || true
   rm -f /tmp/AnyKernel3/anykernel.sh
-  cp "$WORKDIR/repo/anykernel/anykernel.sh" /tmp/AnyKernel3/anykernel.sh
+  cp "$WORKDIR/anykernel/anykernel.sh" /tmp/AnyKernel3/anykernel.sh
   cp out/arch/arm64/boot/Image /tmp/AnyKernel3/Image
   cd /tmp/AnyKernel3
   rm -f *.md patch/sample* ramdisk/placeholder 2>/dev/null || true
